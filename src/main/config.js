@@ -11,7 +11,6 @@ function getConfigPath() {
 function getDefaultConfig() {
   const local = process.env.LOCALAPPDATA || ''
   const programFiles = process.env.ProgramFiles || 'C:\\Program Files'
-  const programFilesX86 = process.env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)'
 
   return {
     items: [
@@ -28,6 +27,7 @@ function getDefaultConfig() {
         id: 'discord',
         name: 'Discord',
         type: 'app',
+        // Update.exe is the official launcher; launcher.js resolves the direct Discord.exe
         path: path.join(local, 'Discord', 'Update.exe'),
         args: ['--processStart', 'Discord.exe'],
         processName: 'Discord.exe',
@@ -55,6 +55,7 @@ function getDefaultConfig() {
         id: 'claude',
         name: 'Claude Desktop',
         type: 'app',
+        // launcher.js searches multiple locations if this path doesn't exist
         path: path.join(local, 'AnthropicClaude', 'claude.exe'),
         args: [],
         processName: 'claude.exe',

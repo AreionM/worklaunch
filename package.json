@@ -10,8 +10,8 @@
     "start": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
-    "dist": "npm run build && electron-builder",
-    "dist:win": "npm run build && electron-builder --win",
+    "dist": "npm run build && electron-builder --config electron-builder.config.js",
+    "dist:win": "npm run build && electron-builder --win --config electron-builder.config.js",
     "generate-icon": "node scripts/generate-icon.js"
   },
   "dependencies": {

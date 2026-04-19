@@ -4,10 +4,11 @@ const fs = require('fs')
 const path = require('path')
 
 function isProcessRunning(processName) {
+  if (!processName) return false
   try {
     const output = execSync(
-      `tasklist /FI "IMAGENAME eq ${processName}" /NH 2>NUL`,
-      { encoding: 'utf8', windowsHide: true }
+      `tasklist /FI "IMAGENAME eq ${processName}" /NH`,
+      { encoding: 'utf8', windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'] }
     )
     return output.toLowerCase().includes(processName.toLowerCase())
   } catch {
@@ -15,63 +16,81 @@ function isProcessRunning(processName) {
   }
 }
 
-function resolveDiscordPath(configuredPath) {
-  // Discord installs versioned app directories: app-X.X.X/Discord.exe
+// --- Path resolvers for apps with non-trivial install locations ---
+
+function resolveDiscordExe() {
+  // Discord installs versioned dirs: %LOCALAPPDATA%\Discord\app-X.X.X\Discord.exe
   const discordDir = path.join(process.env.LOCALAPPDATA || '', 'Discord')
-  if (!fs.existsSync(discordDir)) return configuredPath
+  if (!fs.existsSync(discordDir)) return null
   try {
     const dirs = fs.readdirSync(discordDir).filter(d => /^app-[\d.]+$/.test(d))
-    if (dirs.length === 0) return configuredPath
+    if (dirs.length === 0) return null
     dirs.sort()
-    const latest = dirs[dirs.length - 1]
-    const exe = path.join(discordDir, latest, 'Discord.exe')
-    if (fs.existsSync(exe)) return exe
+    const exe = path.join(discordDir, dirs[dirs.length - 1], 'Discord.exe')
+    return fs.existsSync(exe) ? exe : null
   } catch {
-    // fall through
+    return null
   }
-  return configuredPath
+}
+
+function resolveTeamsPath(configuredPath) {
+  if (fs.existsSync(configuredPath)) return { path: configuredPath, args: [] }
+  // New Teams (WindowsApps)
+  const newTeams = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'WindowsApps', 'ms-teams.exe')
+  if (fs.existsSync(newTeams)) return { path: newTeams, args: [] }
+  // Old Teams
+  const oldTeams = path.join(process.env.LOCALAPPDATA || '', 'Microsoft', 'Teams', 'current', 'Teams.exe')
+  if (fs.existsSync(oldTeams)) return { path: oldTeams, args: [] }
+  return { path: configuredPath, args: [] }
 }
 
 function resolvePowerBIPath(configuredPath) {
   if (fs.existsSync(configuredPath)) return configuredPath
-  const alt = path.join(
+  const x86 = path.join(
     process.env['ProgramFiles(x86)'] || '',
-    'Microsoft Power BI Desktop',
-    'bin',
-    'PBIDesktop.exe'
+    'Microsoft Power BI Desktop', 'bin', 'PBIDesktop.exe'
   )
-  return fs.existsSync(alt) ? alt : configuredPath
+  return fs.existsSync(x86) ? x86 : configuredPath
 }
 
-function resolveTeamsPath(configuredPath) {
+function resolveClaudePath(configuredPath) {
   if (fs.existsSync(configuredPath)) return configuredPath
-  const oldTeams = path.join(
-    process.env.LOCALAPPDATA || '',
-    'Microsoft',
-    'Teams',
-    'current',
-    'Teams.exe'
-  )
-  return fs.existsSync(oldTeams) ? oldTeams : configuredPath
+  const candidates = [
+    path.join(process.env.LOCALAPPDATA || '', 'AnthropicClaude', 'claude.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'Programs', 'Claude', 'claude.exe'),
+    path.join(process.env.LOCALAPPDATA || '', 'Claude', 'claude.exe'),
+    path.join(process.env.ProgramFiles || '', 'Anthropic', 'Claude', 'claude.exe'),
+  ]
+  return candidates.find(p => fs.existsSync(p)) || configuredPath
 }
 
-function resolvePath(item) {
-  if (item.id === 'discord') return resolveDiscordPath(item.path)
-  if (item.id === 'powerbi') return resolvePowerBIPath(item.path)
-  if (item.id === 'teams') return resolveTeamsPath(item.path)
-  return item.path
+// --- Main launch logic ---
+
+function buildLaunchCommand(item) {
+  // Returns { launchPath, launchArgs } with correct values per app type
+  if (item.id === 'discord') {
+    // Prefer direct Discord.exe; fall back to Update.exe launcher
+    const directExe = resolveDiscordExe()
+    if (directExe) return { launchPath: directExe, launchArgs: [] }
+    // Update.exe --processStart Discord.exe
+    return { launchPath: item.path, launchArgs: item.args || [] }
+  }
+  if (item.id === 'teams') {
+    const resolved = resolveTeamsPath(item.path)
+    return { launchPath: resolved.path, launchArgs: resolved.args }
+  }
+  if (item.id === 'powerbi') {
+    return { launchPath: resolvePowerBIPath(item.path), launchArgs: item.args || [] }
+  }
+  if (item.id === 'claude') {
+    return { launchPath: resolveClaudePath(item.path), launchArgs: item.args || [] }
+  }
+  return { launchPath: item.path, launchArgs: item.args || [] }
 }
 
 function launchApp(item) {
-  const resolvedPath = resolvePath(item)
-  const args = item.args || []
-
-  // For Discord launched via Update.exe, use the configured path (Update.exe) + args
-  const launchPath = (item.id === 'discord' && !fs.existsSync(resolvedPath))
-    ? item.path
-    : resolvedPath
-
-  const child = spawn(launchPath, args, {
+  const { launchPath, launchArgs } = buildLaunchCommand(item)
+  const child = spawn(launchPath, launchArgs, {
     detached: true,
     stdio: 'ignore',
     windowsHide: false
@@ -90,8 +109,12 @@ async function launchAll(config) {
     if (!item.enabled) continue
 
     if (item.type === 'website') {
-      launchUrl(item.path)
-      results.launched.push(item.name)
+      try {
+        launchUrl(item.path)
+        results.launched.push(item.name)
+      } catch (err) {
+        results.failed.push(`${item.name} (${err.message})`)
+      }
       continue
     }
 
@@ -110,24 +133,27 @@ async function launchAll(config) {
   }
 
   showNotification(results)
+  logResults(results)
   return results
+}
+
+function logResults(results) {
+  if (results.launched.length) console.log('[WorkLaunch] Launched:', results.launched.join(', '))
+  if (results.skipped.length) console.log('[WorkLaunch] Already running:', results.skipped.join(', '))
+  if (results.failed.length) console.error('[WorkLaunch] Failed:', results.failed.join(', '))
 }
 
 function showNotification(results) {
   if (!Notification.isSupported()) return
 
   const parts = []
-  if (results.launched.length > 0) parts.push(`Launched: ${results.launched.join(', ')}`)
-  if (results.skipped.length > 0) parts.push(`Already running: ${results.skipped.join(', ')}`)
-  if (results.failed.length > 0) parts.push(`Failed: ${results.failed.join(', ')}`)
+  if (results.launched.length) parts.push(`Launched: ${results.launched.join(', ')}`)
+  if (results.skipped.length) parts.push(`Already running: ${results.skipped.join(', ')}`)
+  if (results.failed.length) parts.push(`Failed: ${results.failed.join(', ')}`)
 
-  const body = parts.length > 0 ? parts.join('\n') : 'Nothing to launch.'
+  const body = parts.length ? parts.join('\n') : 'Nothing to launch.'
 
-  const notif = new Notification({
-    title: 'WorkLaunch',
-    body,
-    silent: true
-  })
+  const notif = new Notification({ title: 'WorkLaunch', body, silent: true })
   notif.show()
 }
 

@@ -11,7 +11,7 @@ const fs = require('fs')
 const { loadConfig, saveConfig } = require('./config')
 const { launchAll } = require('./launcher')
 
-// Prevent multiple instances
+// Prevent multiple instances — second launch opens Settings instead
 if (!app.requestSingleInstanceLock()) {
   app.quit()
   process.exit(0)
@@ -21,19 +21,18 @@ let tray = null
 let settingsWindow = null
 
 function createTrayIcon() {
-  // Load from file if it exists (dev or packaged build)
+  // Primary: load from assets/icon.png (dev) or resources/icon.png (packaged)
   const iconPath = app.isPackaged
     ? path.join(process.resourcesPath, 'icon.png')
-    : path.join(app.getAppPath(), 'resources', 'icon.png')
+    : path.join(app.getAppPath(), 'assets', 'icon.png')
 
   if (fs.existsSync(iconPath)) {
     return nativeImage.createFromPath(iconPath)
   }
 
-  // Inline fallback: 32x32 RGBA blue square with a white "W"
+  // Inline fallback: build a 32x32 blue icon in memory (no file needed)
   const size = 32
   const data = Buffer.alloc(size * size * 4)
-
   const BG = [41, 98, 255]
   const FG = [255, 255, 255]
 
@@ -41,20 +40,16 @@ function createTrayIcon() {
     data[i * 4] = BG[0]; data[i * 4 + 1] = BG[1]
     data[i * 4 + 2] = BG[2]; data[i * 4 + 3] = 255
   }
-
-  // Simple W pixels
-  const pts = [
+  const wPts = [
     [5,6],[5,8],[5,10],[5,12],[5,14],[5,16],[5,18],[5,20],[5,22],
     [7,22],[9,18],[11,14],[11,16],[11,18],[11,20],[11,22],
     [13,22],[13,20],[15,14],[17,18],[17,20],[17,22],
     [19,22],[19,18],[21,14],[21,16],[21,18],[21,20],[21,22],
     [23,22],[23,20],[23,18],[23,16],[23,14],[23,12],[23,10],[23,8],[23,6]
   ]
-  for (const [x, y] of pts) {
-    if (x < size && y < size) {
-      const i = (y * size + x) * 4
-      data[i] = FG[0]; data[i + 1] = FG[1]; data[i + 2] = FG[2]; data[i + 3] = 255
-    }
+  for (const [x, y] of wPts) {
+    const idx = (y * size + x) * 4
+    data[idx] = FG[0]; data[idx + 1] = FG[1]; data[idx + 2] = FG[2]; data[idx + 3] = 255
   }
   return nativeImage.createFromBuffer(data, { width: size, height: size })
 }
@@ -62,7 +57,7 @@ function createTrayIcon() {
 function buildTrayMenu() {
   return Menu.buildFromTemplate([
     {
-      label: '⚡ Launch All',
+      label: 'Launch All',
       click: async () => {
         const config = loadConfig()
         await launchAll(config)
@@ -70,12 +65,12 @@ function buildTrayMenu() {
     },
     { type: 'separator' },
     {
-      label: '⚙ Settings',
+      label: 'Settings',
       click: () => openSettingsWindow()
     },
     { type: 'separator' },
     {
-      label: 'Quit WorkLaunch',
+      label: 'Quit',
       click: () => app.quit()
     }
   ])
@@ -112,10 +107,19 @@ function openSettingsWindow() {
     settingsWindow = null
   })
 
+  // In dev mode electron-vite sets ELECTRON_RENDERER_URL; in prod load the built file
   if (process.env.ELECTRON_RENDERER_URL) {
     settingsWindow.loadURL(process.env.ELECTRON_RENDERER_URL)
   } else {
     settingsWindow.loadFile(path.join(__dirname, '../../out/renderer/index.html'))
+  }
+}
+
+function getAutoStart() {
+  try {
+    return app.getLoginItemSettings().openAtLogin
+  } catch {
+    return false
   }
 }
 
@@ -132,16 +136,17 @@ ipcMain.handle('worklaunch:launch-all', async () => {
   return launchAll(config)
 })
 
-ipcMain.handle('worklaunch:get-autostart', () => {
-  return app.getLoginItemSettings().openAtLogin
-})
+ipcMain.handle('worklaunch:get-autostart', () => getAutoStart())
 
 ipcMain.handle('worklaunch:set-autostart', (_event, enabled) => {
-  app.setLoginItemSettings({
-    openAtLogin: enabled,
-    openAsHidden: true,
-    name: 'WorkLaunch'
-  })
+  try {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      name: 'WorkLaunch'
+    })
+  } catch {
+    // setLoginItemSettings may fail in dev mode — that's OK
+  }
   const config = loadConfig()
   config.autoStart = enabled
   saveConfig(config)
@@ -153,13 +158,10 @@ ipcMain.handle('worklaunch:get-version', () => app.getVersion())
 app.whenReady().then(() => {
   const icon = createTrayIcon()
   tray = new Tray(icon)
-  tray.setToolTip('WorkLaunch — click to open settings, double-click to launch all')
+  tray.setToolTip('WorkLaunch — right-click for menu, double-click to launch all')
   tray.setContextMenu(buildTrayMenu())
 
-  // Single click opens settings
   tray.on('click', () => openSettingsWindow())
-
-  // Double-click triggers launch all
   tray.on('double-click', async () => {
     const config = loadConfig()
     await launchAll(config)
@@ -170,7 +172,7 @@ app.on('second-instance', () => {
   openSettingsWindow()
 })
 
-// Keep the app alive in the system tray when all windows are closed
+// Keep running in the tray after settings window is closed
 app.on('window-all-closed', () => {
   // Intentionally empty — tray keeps the process alive
 })

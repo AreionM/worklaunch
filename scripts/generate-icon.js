@@ -1,5 +1,5 @@
 /**
- * Generates resources/icon.png — a 256x256 blue PNG with a "W" monogram.
+ * Generates assets/icon.png — a 256x256 blue PNG with a "W" monogram.
  * Uses only Node.js built-in modules. Run via: node scripts/generate-icon.js
  */
 const { deflateSync, crc32 } = require('zlib')
@@ -105,7 +105,7 @@ const png = Buffer.concat([
   makeChunk('IEND', Buffer.alloc(0))
 ])
 
-const outDir = join(__dirname, '..', 'resources')
+const outDir = join(__dirname, '..', 'assets')
 mkdirSync(outDir, { recursive: true })
 writeFileSync(join(outDir, 'icon.png'), png)
-console.log(`✓ Icon written to resources/icon.png (${SZ}x${SZ}, ${png.length} bytes)`)
+console.log(`✓ Icon written to assets/icon.png (${SZ}x${SZ}, ${png.length} bytes)`)
