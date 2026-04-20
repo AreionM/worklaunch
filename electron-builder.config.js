@@ -24,7 +24,10 @@ module.exports = {
 
   win: {
     target: [{ target: 'nsis', arch: ['x64'] }],
-    icon: 'assets/icon.png'
+    icon: 'assets/icon.png',
+    // No code-signing certificate — skip winCodeSign download entirely
+    sign: null,
+    signingHashAlgorithms: null
   },
 
   nsis: {
