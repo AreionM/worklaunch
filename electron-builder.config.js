@@ -6,7 +6,8 @@
 /** @type {import('electron-builder').Configuration} */
 module.exports = {
   appId: 'com.alchemyintel.worklaunch',
-  productName: 'WorkLaunch',
+  productName: 'Work Launcher',
+  executableName: 'Work Launcher',
 
   directories: {
     buildResources: 'build',
